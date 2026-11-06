@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace Modules\Invoices\Application\Actions;
 
-use Illuminate\Database\ConnectionInterface;
 use Modules\Invoices\Application\Data\CreateInvoiceData;
+use Modules\Invoices\Application\Data\InvoiceView;
 use Modules\Invoices\Application\Data\ProductLineData;
+use Modules\Invoices\Application\Ports\TransactionManagerInterface;
+use Modules\Invoices\Domain\Customer;
 use Modules\Invoices\Domain\Invoice;
 use Modules\Invoices\Domain\InvoiceRepositoryInterface;
 use Modules\Invoices\Domain\ProductLine;
@@ -14,15 +16,14 @@ use Modules\Invoices\Domain\ProductLine;
 final readonly class CreateInvoice
 {
     public function __construct(
-        private ConnectionInterface $connection,
+        private TransactionManagerInterface $transactions,
         private InvoiceRepositoryInterface $invoices,
     ) {}
 
-    public function handle(CreateInvoiceData $data): Invoice
+    public function handle(CreateInvoiceData $data): InvoiceView
     {
         $invoice = Invoice::create(
-            customerName: $data->customerName,
-            customerEmail: $data->customerEmail,
+            customer: new Customer($data->customerName, $data->customerEmail),
             productLines: array_map(
                 static fn (ProductLineData $line): ProductLine => ProductLine::create(
                     productName: $line->productName,
@@ -33,8 +34,8 @@ final readonly class CreateInvoice
             ),
         );
 
-        $this->connection->transaction(fn () => $this->invoices->save($invoice));
+        $this->transactions->run(fn () => $this->invoices->save($invoice));
 
-        return $invoice;
+        return InvoiceView::fromInvoice($invoice);
     }
 }

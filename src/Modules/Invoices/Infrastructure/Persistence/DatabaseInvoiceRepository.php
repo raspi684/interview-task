@@ -4,14 +4,17 @@ declare(strict_types=1);
 
 namespace Modules\Invoices\Infrastructure\Persistence;
 
+use DomainException;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Support\Facades\Date;
+use Modules\Invoices\Domain\Customer;
 use Modules\Invoices\Domain\Enums\StatusEnum;
 use Modules\Invoices\Domain\Invoice;
 use Modules\Invoices\Domain\InvoiceRepositoryInterface;
 use Modules\Invoices\Domain\ProductLine;
 use Ramsey\Uuid\Uuid;
 use Ramsey\Uuid\UuidInterface;
+use UnexpectedValueException;
 
 final readonly class DatabaseInvoiceRepository implements InvoiceRepositoryInterface
 {
@@ -36,8 +39,8 @@ final readonly class DatabaseInvoiceRepository implements InvoiceRepositoryInter
         $this->connection->table('invoices')->upsert(
             [[
                 'id' => $invoice->id()->toString(),
-                'customer_name' => $invoice->customerName(),
-                'customer_email' => $invoice->customerEmail(),
+                'customer_name' => $invoice->customer()->name,
+                'customer_email' => $invoice->customer()->email,
                 'status' => $invoice->status()->value,
                 'created_at' => $now,
                 'updated_at' => $now,
@@ -82,26 +85,33 @@ final readonly class DatabaseInvoiceRepository implements InvoiceRepositoryInter
             return null;
         }
 
-        $productLines = $this->connection->table('invoice_product_lines')
+        $lines = $this->connection->table('invoice_product_lines')
             ->where('invoice_id', $id->toString())
             // Line ids are UUIDv7, so ordering by id restores creation order.
             ->orderBy('id')
-            ->get()
-            ->map(static fn (object $line): ProductLine => ProductLine::reconstitute(
-                id: Uuid::fromString($line->id),
-                productName: $line->name,
-                quantity: (int) $line->quantity,
-                unitPrice: (int) $line->unit_price,
-            ))
-            ->values()
-            ->all();
+            ->get();
 
-        return Invoice::reconstitute(
-            id: Uuid::fromString($row->id),
-            status: StatusEnum::from($row->status),
-            customerName: $row->customer_name,
-            customerEmail: $row->customer_email,
-            productLines: $productLines,
-        );
+        // A stored row that breaks a domain rule is corrupt data on our side, not a client error,
+        // so it must not surface as a domain exception (which the API maps to 4xx).
+        try {
+            return Invoice::reconstitute(
+                id: Uuid::fromString($row->id),
+                status: StatusEnum::from($row->status),
+                customer: new Customer($row->customer_name, $row->customer_email),
+                productLines: $lines
+                    ->map(static fn (object $line): ProductLine => ProductLine::reconstitute(
+                        id: Uuid::fromString($line->id),
+                        productName: $line->name,
+                        quantity: (int) $line->quantity,
+                        unitPrice: (int) $line->unit_price,
+                    ))
+                    ->all(),
+            );
+        } catch (DomainException $exception) {
+            throw new UnexpectedValueException(
+                sprintf('Stored invoice %s violates domain rules.', $id->toString()),
+                previous: $exception,
+            );
+        }
     }
 }

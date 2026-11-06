@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Modules\Invoices\Application\Actions;
 
+use Modules\Invoices\Application\Data\InvoiceView;
 use Modules\Invoices\Domain\Exceptions\InvoiceNotFound;
-use Modules\Invoices\Domain\Invoice;
 use Modules\Invoices\Domain\InvoiceRepositoryInterface;
 use Ramsey\Uuid\UuidInterface;
 
@@ -15,8 +15,10 @@ final readonly class GetInvoice
         private InvoiceRepositoryInterface $invoices,
     ) {}
 
-    public function handle(UuidInterface $id): Invoice
+    public function handle(UuidInterface $id): InvoiceView
     {
-        return $this->invoices->find($id) ?? throw InvoiceNotFound::withId($id);
+        $invoice = $this->invoices->find($id) ?? throw InvoiceNotFound::withId($id);
+
+        return InvoiceView::fromInvoice($invoice);
     }
 }

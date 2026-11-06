@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Modules\Invoices\Domain;
 
+use InvalidArgumentException;
+use Modules\Invoices\Domain\Enums\DeliveryConfirmation;
 use Modules\Invoices\Domain\Enums\StatusEnum;
 use Modules\Invoices\Domain\Exceptions\InvalidStatusTransition;
 use Modules\Invoices\Domain\Exceptions\InvoiceCannotBeSent;
@@ -12,33 +14,43 @@ use Ramsey\Uuid\UuidInterface;
 
 final class Invoice
 {
-    /** @param list<ProductLine> $productLines */
+    /** @var list<ProductLine> */
+    private readonly array $productLines;
+
+    /** @param array<ProductLine> $productLines */
     private function __construct(
         private readonly UuidInterface $id,
         private StatusEnum $status,
-        private readonly string $customerName,
-        private readonly string $customerEmail,
-        private readonly array $productLines,
-    ) {}
+        private readonly Customer $customer,
+        array $productLines,
+    ) {
+        foreach ($productLines as $line) {
+            if (! $line instanceof ProductLine) {
+                throw new InvalidArgumentException('Invoice product lines must be ProductLine instances.');
+            }
+        }
+
+        $this->productLines = array_values($productLines);
+    }
 
     /** @param list<ProductLine> $productLines */
-    public static function create(string $customerName, string $customerEmail, array $productLines): self
+    public static function create(Customer $customer, array $productLines): self
     {
-        return new self(Uuid::uuid4(), StatusEnum::Draft, $customerName, $customerEmail, $productLines);
+        return new self(Uuid::uuid4(), StatusEnum::Draft, $customer, $productLines);
     }
 
     /** @param list<ProductLine> $productLines */
     public static function reconstitute(
         UuidInterface $id,
         StatusEnum $status,
-        string $customerName,
-        string $customerEmail,
+        Customer $customer,
         array $productLines,
     ): self {
-        return new self($id, $status, $customerName, $customerEmail, $productLines);
+        return new self($id, $status, $customer, $productLines);
     }
 
-    public function send(): void
+    /** Moves the invoice to "sending"; the e-mail itself is handed over by the application layer. */
+    public function requestSending(): void
     {
         if ($this->status !== StatusEnum::Draft) {
             throw InvalidStatusTransition::between($this->status, StatusEnum::Sending);
@@ -57,13 +69,23 @@ final class Invoice
         $this->status = StatusEnum::Sending;
     }
 
-    public function markAsSentToClient(): void
+    /**
+     * Delivery confirmations arrive at least once, so a repeated one is not an error;
+     * only an invoice in "sending" moves to "sent-to-client".
+     */
+    public function confirmDelivery(): DeliveryConfirmation
     {
+        if ($this->status === StatusEnum::SentToClient) {
+            return DeliveryConfirmation::AlreadyConfirmed;
+        }
+
         if ($this->status !== StatusEnum::Sending) {
-            throw InvalidStatusTransition::between($this->status, StatusEnum::SentToClient);
+            return DeliveryConfirmation::NotAwaitingDelivery;
         }
 
         $this->status = StatusEnum::SentToClient;
+
+        return DeliveryConfirmation::Confirmed;
     }
 
     public function id(): UuidInterface
@@ -76,14 +98,9 @@ final class Invoice
         return $this->status;
     }
 
-    public function customerName(): string
+    public function customer(): Customer
     {
-        return $this->customerName;
-    }
-
-    public function customerEmail(): string
-    {
-        return $this->customerEmail;
+        return $this->customer;
     }
 
     /** @return list<ProductLine> */

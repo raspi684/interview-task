@@ -15,7 +15,8 @@ final class CreateInvoiceRequest extends FormRequest
     {
         return [
             'customer_name' => ['required', 'string', 'max:255'],
-            'customer_email' => ['required', 'string', 'email', 'max:255'],
+            // "filter" matches the domain rule (FILTER_VALIDATE_EMAIL) in Customer.
+            'customer_email' => ['required', 'string', 'email:filter', 'max:255'],
             'product_lines' => ['sometimes', 'array', 'max:100'],
             'product_lines.*.product_name' => ['required', 'string', 'max:255'],
             // Per-field bounds fit a 32-bit DB integer column; 100 lines × max line total (1e15) stays far below PHP_INT_MAX.

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\Invoice\Application;
 
 use Modules\Invoices\Application\Actions\MarkInvoiceAsSentToClient;
+use Modules\Invoices\Domain\Customer;
 use Modules\Invoices\Domain\Enums\StatusEnum;
 use Modules\Invoices\Domain\Invoice;
 use Modules\Invoices\Domain\InvoiceRepositoryInterface;
@@ -14,13 +15,11 @@ use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
 use Ramsey\Uuid\Uuid;
 use RuntimeException;
-use Tests\Unit\Invoice\Application\Fakes\InlineTransactions;
+use Tests\Unit\Invoice\Application\Fakes\InlineTransactionManager;
 use Tests\Unit\Invoice\Application\Fakes\InMemoryInvoiceRepository;
 
 final class MarkInvoiceAsSentToClientTest extends TestCase
 {
-    use InlineTransactions;
-
     private InMemoryInvoiceRepository $invoices;
 
     private LoggerInterface&MockObject $logger;
@@ -32,7 +31,7 @@ final class MarkInvoiceAsSentToClientTest extends TestCase
         $this->invoices = new InMemoryInvoiceRepository;
         $this->logger = $this->createMock(LoggerInterface::class);
         $this->markInvoiceAsSentToClient = new MarkInvoiceAsSentToClient(
-            connection: $this->inlineTransactions(),
+            transactions: new InlineTransactionManager,
             invoices: $this->invoices,
             logger: $this->logger,
         );
@@ -80,7 +79,7 @@ final class MarkInvoiceAsSentToClientTest extends TestCase
         $repository = $this->createStub(InvoiceRepositoryInterface::class);
         $repository->method('findForUpdate')->willThrowException(new RuntimeException('Database unavailable'));
         $action = new MarkInvoiceAsSentToClient(
-            connection: $this->inlineTransactions(),
+            transactions: new InlineTransactionManager,
             invoices: $repository,
             logger: $this->logger,
         );
@@ -95,8 +94,7 @@ final class MarkInvoiceAsSentToClientTest extends TestCase
         $invoice = Invoice::reconstitute(
             id: Uuid::uuid4(),
             status: $status,
-            customerName: 'John Doe',
-            customerEmail: 'john@example.com',
+            customer: new Customer('John Doe', 'john@example.com'),
             productLines: [ProductLine::create('Consulting', 1, 100)],
         );
         $this->invoices->save($invoice);

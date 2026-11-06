@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Invoice\Domain;
 
+use InvalidArgumentException;
+use Modules\Invoices\Domain\Customer;
+use Modules\Invoices\Domain\Enums\DeliveryConfirmation;
 use Modules\Invoices\Domain\Enums\StatusEnum;
 use Modules\Invoices\Domain\Exceptions\InvalidStatusTransition;
 use Modules\Invoices\Domain\Exceptions\InvoiceCannotBeSent;
@@ -17,25 +20,33 @@ final class InvoiceTest extends TestCase
 {
     public function testIsCreatedAsDraft(): void
     {
-        $invoice = Invoice::create('John Doe', 'john@example.com', []);
+        $customer = new Customer('John Doe', 'john@example.com');
+
+        $invoice = Invoice::create($customer, []);
 
         $this->assertSame(StatusEnum::Draft, $invoice->status());
-        $this->assertSame('John Doe', $invoice->customerName());
-        $this->assertSame('john@example.com', $invoice->customerEmail());
+        $this->assertSame($customer, $invoice->customer());
         $this->assertSame([], $invoice->productLines());
+    }
+
+    public function testRejectsProductLinesOfWrongType(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        Invoice::create(new Customer('John Doe', 'john@example.com'), [['product_name' => 'Consulting']]);
     }
 
     public function testGeneratesUniqueIdOnCreation(): void
     {
-        $first = Invoice::create('John Doe', 'john@example.com', []);
-        $second = Invoice::create('John Doe', 'john@example.com', []);
+        $first = $this->draftWith([]);
+        $second = $this->draftWith([]);
 
         $this->assertFalse($first->id()->equals($second->id()));
     }
 
     public function testCalculatesTotalPriceAsSumOfLineTotals(): void
     {
-        $invoice = Invoice::create('John Doe', 'john@example.com', [
+        $invoice = $this->draftWith([
             ProductLine::create('Consulting', 2, 1500),
             ProductLine::create('Hosting', 3, 200),
         ]);
@@ -45,27 +56,25 @@ final class InvoiceTest extends TestCase
 
     public function testTotalPriceIsZeroWithoutProductLines(): void
     {
-        $invoice = Invoice::create('John Doe', 'john@example.com', []);
-
-        $this->assertSame(0, $invoice->totalPrice());
+        $this->assertSame(0, $this->draftWith([])->totalPrice());
     }
 
-    public function testSendMovesDraftToSending(): void
+    public function testRequestSendingMovesDraftToSending(): void
     {
-        $invoice = Invoice::create('John Doe', 'john@example.com', [ProductLine::create('Consulting', 1, 100)]);
+        $invoice = $this->draftWith([ProductLine::create('Consulting', 1, 100)]);
 
-        $invoice->send();
+        $invoice->requestSending();
 
         $this->assertSame(StatusEnum::Sending, $invoice->status());
     }
 
-    public function testCannotBeSentWithoutProductLines(): void
+    public function testCannotRequestSendingWithoutProductLines(): void
     {
-        $invoice = Invoice::create('John Doe', 'john@example.com', []);
+        $invoice = $this->draftWith([]);
 
         $this->expectException(InvoiceCannotBeSent::class);
 
-        $invoice->send();
+        $invoice->requestSending();
     }
 
     /** @return iterable<string, array{int, int}> */
@@ -76,16 +85,16 @@ final class InvoiceTest extends TestCase
     }
 
     #[DataProvider('nonPositiveLineValues')]
-    public function testCannotBeSentWithNonPositiveProductLine(int $quantity, int $unitPrice): void
+    public function testCannotRequestSendingWithNonPositiveProductLine(int $quantity, int $unitPrice): void
     {
-        $invoice = Invoice::create('John Doe', 'john@example.com', [
+        $invoice = $this->draftWith([
             ProductLine::create('Consulting', 1, 100),
             ProductLine::create('Hosting', $quantity, $unitPrice),
         ]);
 
         $this->expectException(InvoiceCannotBeSent::class);
 
-        $invoice->send();
+        $invoice->requestSending();
     }
 
     /** @return iterable<string, array{StatusEnum}> */
@@ -96,39 +105,36 @@ final class InvoiceTest extends TestCase
     }
 
     #[DataProvider('nonDraftStatuses')]
-    public function testCannotBeSentWhenNotDraft(StatusEnum $status): void
+    public function testCannotRequestSendingWhenNotDraft(StatusEnum $status): void
     {
         $invoice = $this->invoiceIn($status);
 
         $this->expectException(InvalidStatusTransition::class);
 
-        $invoice->send();
+        $invoice->requestSending();
     }
 
-    public function testMarkAsSentToClientMovesSendingToSentToClient(): void
+    /** @return iterable<string, array{StatusEnum, DeliveryConfirmation, StatusEnum}> */
+    public static function deliveryConfirmations(): iterable
     {
-        $invoice = $this->invoiceIn(StatusEnum::Sending);
-
-        $invoice->markAsSentToClient();
-
-        $this->assertSame(StatusEnum::SentToClient, $invoice->status());
+        yield 'sending is confirmed' => [StatusEnum::Sending, DeliveryConfirmation::Confirmed, StatusEnum::SentToClient];
+        yield 'repeated confirmation' => [StatusEnum::SentToClient, DeliveryConfirmation::AlreadyConfirmed, StatusEnum::SentToClient];
+        yield 'draft is not awaiting delivery' => [StatusEnum::Draft, DeliveryConfirmation::NotAwaitingDelivery, StatusEnum::Draft];
     }
 
-    /** @return iterable<string, array{StatusEnum}> */
-    public static function nonSendingStatuses(): iterable
-    {
-        yield 'draft' => [StatusEnum::Draft];
-        yield 'sent to client' => [StatusEnum::SentToClient];
-    }
-
-    #[DataProvider('nonSendingStatuses')]
-    public function testCannotBeMarkedAsSentToClientWhenNotSending(StatusEnum $status): void
+    #[DataProvider('deliveryConfirmations')]
+    public function testConfirmDelivery(StatusEnum $status, DeliveryConfirmation $expected, StatusEnum $statusAfter): void
     {
         $invoice = $this->invoiceIn($status);
 
-        $this->expectException(InvalidStatusTransition::class);
+        $this->assertSame($expected, $invoice->confirmDelivery());
+        $this->assertSame($statusAfter, $invoice->status());
+    }
 
-        $invoice->markAsSentToClient();
+    /** @param list<ProductLine> $productLines */
+    private function draftWith(array $productLines): Invoice
+    {
+        return Invoice::create(new Customer('John Doe', 'john@example.com'), $productLines);
     }
 
     private function invoiceIn(StatusEnum $status): Invoice
@@ -136,8 +142,7 @@ final class InvoiceTest extends TestCase
         return Invoice::reconstitute(
             id: Uuid::uuid4(),
             status: $status,
-            customerName: 'John Doe',
-            customerEmail: 'john@example.com',
+            customer: new Customer('John Doe', 'john@example.com'),
             productLines: [ProductLine::create('Consulting', 1, 100)],
         );
     }

@@ -5,18 +5,18 @@ declare(strict_types=1);
 namespace Modules\Invoices\Application\Actions;
 
 use Exception;
-use Illuminate\Database\ConnectionInterface;
+use Modules\Invoices\Application\Data\InvoiceView;
 use Modules\Invoices\Application\Exceptions\InvoiceNotificationFailed;
 use Modules\Invoices\Application\Ports\InvoiceNotifierInterface;
+use Modules\Invoices\Application\Ports\TransactionManagerInterface;
 use Modules\Invoices\Domain\Exceptions\InvoiceNotFound;
-use Modules\Invoices\Domain\Invoice;
 use Modules\Invoices\Domain\InvoiceRepositoryInterface;
 use Ramsey\Uuid\UuidInterface;
 
 final readonly class SendInvoice
 {
     public function __construct(
-        private ConnectionInterface $connection,
+        private TransactionManagerInterface $transactions,
         private InvoiceRepositoryInterface $invoices,
         private InvoiceNotifierInterface $notifier,
     ) {}
@@ -26,12 +26,12 @@ final readonly class SendInvoice
      * the status change rolls back and the invoice stays in draft, ready to be sent again.
      * A delivery webhook racing this transaction waits on the row lock and sees "sending".
      */
-    public function handle(UuidInterface $id): Invoice
+    public function handle(UuidInterface $id): InvoiceView
     {
-        return $this->connection->transaction(function () use ($id): Invoice {
+        return $this->transactions->run(function () use ($id): InvoiceView {
             $invoice = $this->invoices->findForUpdate($id) ?? throw InvoiceNotFound::withId($id);
 
-            $invoice->send();
+            $invoice->requestSending();
             $this->invoices->save($invoice);
 
             try {
@@ -40,7 +40,7 @@ final readonly class SendInvoice
                 throw InvoiceNotificationFailed::forInvoice($id, $exception);
             }
 
-            return $invoice;
+            return InvoiceView::fromInvoice($invoice);
         });
     }
 }

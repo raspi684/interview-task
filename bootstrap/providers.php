@@ -1,6 +1,6 @@
 <?php
 
 return [
-    \Modules\Invoices\Infrastructure\Providers\InvoiceServiceProvider::class,
+    \Modules\Invoices\InvoiceServiceProvider::class,
     \Modules\Notifications\Infrastructure\Providers\NotificationServiceProvider::class,
 ];

@@ -19,11 +19,11 @@ final readonly class NotificationFacadeInvoiceNotifier implements InvoiceNotifie
     {
         $this->notifications->notify(new NotifyData(
             resourceId: $invoice->id(),
-            toEmail: $invoice->customerEmail(),
+            toEmail: $invoice->customer()->email,
             subject: sprintf('Invoice %s', $invoice->id()->toString()),
             message: sprintf(
                 "Dear %s,\n\nyour invoice %s has been issued. Total amount due: %d.",
-                $invoice->customerName(),
+                $invoice->customer()->name,
                 $invoice->id()->toString(),
                 $invoice->totalPrice(),
             ),

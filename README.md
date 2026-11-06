@@ -71,11 +71,13 @@ The Notification module included in this repository is a minimal, mock integrati
 
 ```
 src/Modules/Invoices/
-├── Domain/          Invoice aggregate, ProductLine, status rules, repository contract (plain PHP)
+├── Domain/          Invoice aggregate, ProductLine, Customer value object, status rules,
+│                    repository contract (plain PHP)
 ├── Application/     Use cases (CreateInvoice, GetInvoice, SendInvoice, MarkInvoiceAsSentToClient),
-│                    notifier port, WebhookDeliveredEvent listener
-├── Infrastructure/  Query-builder repository, Notifications adapter, service provider
-└── Presentation/    Controller, request validation, JSON resource, routes
+│                    notifier and transaction ports, InvoiceView read model, WebhookDeliveredEvent listener
+├── Infrastructure/  Query-builder repository, transaction manager, Notifications adapter
+├── Presentation/    Controller, request validation, JSON resource, exception-to-HTTP mapping, routes
+└── InvoiceServiceProvider.php   Composition root: wires ports to adapters, the listener and exception mapping
 ```
 
 Invoices depends on Notifications only through `Modules\Notifications\Api` (facade, `NotifyData`, `WebhookDeliveredEvent`).
@@ -104,7 +106,7 @@ Invoices depends on Notifications only through `Modules\Notifications\Api` (faca
 
 ### Testing strategy
 
-- **Domain unit tests** — every allowed and forbidden status transition, sendability rules, totals.
+- **Domain unit tests** — every allowed and forbidden status transition, delivery confirmation outcomes, sendability rules, customer invariants, totals.
 - **Application unit tests** — `SendInvoice` and `MarkInvoiceAsSentToClient` with an in-memory repository and a spy notifier: notification requested exactly once, never on rule violations, provider failures wrapped; idempotent delivery handling.
 - **Feature tests** — HTTP contracts, repository round-trip, provider failure (driver throws → `503`, invoice still `draft`, retry succeeds), and the end-to-end flow create → send → delivery webhook → `sent-to-client`.
 
